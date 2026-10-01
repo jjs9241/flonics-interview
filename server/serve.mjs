@@ -34,7 +34,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   let path = decodeURIComponent(url.pathname).replace(/^\/+/, "");
-  if (path === "") path = "client/index.html";
+  if (path === "" || path === "client") {
+    // 상대 경로(./app.js)가 client/ 기준으로 풀리도록 리다이렉트
+    res.writeHead(302, { Location: "/client/" }).end();
+    return;
+  }
+  if (path.endsWith("/")) path += "index.html";
   const file = normalize(join(ROOT, path));
 
   if (!file.startsWith(ROOT) || !PUBLIC.some((p) => path.startsWith(p))) {

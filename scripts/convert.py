@@ -8,7 +8,7 @@ CloudFront Range 요청으로 서빙할 수 있는 형태다.
   t{T}/L{L}.bin          시점 T, 레벨 L 의 블록들을 이어 붙인 shard. 블록마다 zlib 압축
   t{T}/slices.raw        비교용: 같은 볼륨을 슬라이스 순서([z][y][x], int16) 그대로 저장
 
-사용: .venv/bin/python scripts/convert.py [--brick 32]
+사용: .venv/bin/python scripts/convert.py [--brick 32] [--suffix _b16] [이름...]
 """
 from __future__ import annotations
 
@@ -147,9 +147,9 @@ def write_shard(vol: np.ndarray, brick: int, path: Path):
     return grid, index, offset, raw_bytes
 
 
-def convert(name: str, brick: int) -> None:
+def convert(name: str, brick: int, suffix: str = "") -> None:
     volumes, geometry, meta = load_series(RAW / name)
-    out = OUT / name
+    out = OUT / (name + suffix)
     out.mkdir(parents=True, exist_ok=True)
 
     levels = []
@@ -181,7 +181,7 @@ def convert(name: str, brick: int) -> None:
                 totals["packed"] += packed
 
     manifest = {
-        "name": name,
+        "name": name + suffix,
         "source": meta,
         "brick": brick,
         "dtype": "int16",
@@ -203,10 +203,11 @@ def convert(name: str, brick: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--brick", type=int, default=32)
+    parser.add_argument("--suffix", default="", help="출력 폴더 접미사 (블록 크기 비교용)")
     parser.add_argument("names", nargs="*", default=["abd_mra", "tof"])
     args = parser.parse_args()
     for name in args.names:
-        convert(name, args.brick)
+        convert(name, args.brick, args.suffix)
 
 
 if __name__ == "__main__":

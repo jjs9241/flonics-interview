@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Brick MPR PoC</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root {
+        --bg: #0f1013;
+        --panel: #181a1f;
+        --line: #2a2d35;
+        --text: #e6e7ea;
+        --muted: #9aa0ab;
+        --accent: #f08a24;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+      }
+      header { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+      header h1 { margin: 0; font-size: 15px; }
+      #info { color: var(--muted); }
+      main { display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; }
+      canvas { width: 640px; height: 640px; max-width: 100%; aspect-ratio: 1; background: #000; cursor: grab; touch-action: none; }
+      aside { flex: 1; min-width: 320px; max-width: 560px; display: flex; flex-direction: column; gap: 12px; }
+      section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+      label { display: grid; grid-template-columns: 70px 1fr 64px; align-items: center; gap: 8px; }
+      input[type="range"] { width: 100%; }
+      button, select {
+        background: #23262d; color: var(--text); border: 1px solid var(--line);
+        border-radius: 4px; padding: 4px 10px; font: inherit; cursor: pointer;
+      }
+      button.on { border-color: var(--accent); color: var(--accent); }
+      .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+      table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+      th { text-align: left; color: var(--muted); font-weight: 600; padding-top: 6px; }
+      td { padding: 1px 0; font-variant-numeric: tabular-nums; }
+      td:not(:first-child) { text-align: right; }
+      .compare td, .compare th { border-bottom: 1px solid var(--line); padding: 3px 4px; }
+      .compare tr:nth-child(2) td { color: var(--accent); }
+      pre { margin: 0; font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
+      .hint { color: var(--muted); font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>블록 + Range 요청 MPR PoC</h1>
+      <div id="info">불러오는 중…</div>
+    </header>
+    <main>
+      <canvas id="view"></canvas>
+      <aside>
+        <section>
+          <div class="row">
+            <select id="dataset">
+              <option value="abd_mra">복부 MRA (2 phase)</option>
+              <option value="tof">신장 동적 조영 (23 시점)</option>
+            </select>
+            <button data-preset="axial">Axial</button>
+            <button data-preset="coronal">Coronal</button>
+            <button data-preset="sagittal">Sagittal</button>
+          </div>
+          <label>위치 <input id="offset" type="range" step="0.1" /> <span id="offsetLabel"></span></label>
+          <label>좌우 기울기 <input id="yaw" type="range" min="-80" max="80" step="1" /> <span id="yawLabel"></span></label>
+          <label>상하 기울기 <input id="pitch" type="range" min="-80" max="80" step="1" /> <span id="pitchLabel"></span></label>
+          <label id="timeRow">시점 <input id="time" type="range" min="0" step="1" />
+            <span><button id="play">▶ 재생</button></span></label>
+          <div class="row">
+            <span id="timeLabel"></span>
+            <label style="display:flex;grid-template-columns:none"><input id="showCoarse" type="checkbox" checked /> 저해상도 영역 표시(주황)</label>
+          </div>
+          <div class="hint">휠: 위치 · 드래그: 기울기(비스듬한 단면) · Shift+드래그: window/level</div>
+        </section>
+        <section id="stats"></section>
+        <section><pre id="log"></pre></section>
+      </aside>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
