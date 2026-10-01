@@ -131,3 +131,76 @@ export function sliceLayoutCost(m, center, u, v, fov, samples = 512) {
   }
   return { requests, bytes };
 }
+
+// ── 3D 위치 화면용 ───────────────────────────────────
+
+/** 인덱스 공간 상자 [lo, hi] 의 모서리 12개 → 환자 좌표 선분 쌍 */
+export function boxEdges(m, lo, hi) {
+  const corner = (c) => indexToWorld(m, [c & 1 ? hi[0] : lo[0], c & 2 ? hi[1] : lo[1], c & 4 ? hi[2] : lo[2]]);
+  const pairs = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
+  return pairs.flatMap(([a, b]) => [corner(a), corner(b)]);
+}
+
+/** 볼륨 전체 상자 (복셀 가장자리 기준) */
+export function volumeBox(m) {
+  return boxEdges(m, [-0.5, -0.5, -0.5], m.dims.map((d) => d - 0.5));
+}
+
+/** L0 블록 id 의 상자 */
+export function brickBox(m, id) {
+  const B = m.brick;
+  const [gx, gy] = m.levels[0].brickGrid;
+  const bz = Math.floor(id / (gx * gy)), by = Math.floor((id % (gx * gy)) / gx), bx = id % gx;
+  const lo = [bx * B - 0.5, by * B - 0.5, bz * B - 0.5];
+  const hi = [0, 1, 2].map((a) => Math.min(([bx, by, bz][a] + 1) * B, m.dims[a]) - 0.5);
+  return boxEdges(m, lo, hi);
+}
+
+/**
+ * 단면과 볼륨 상자가 만나는 볼록 다각형.
+ * 상자 모서리 12개와 평면의 교점을 구해 단면 위 각도 순으로 정렬한다.
+ * @returns { points: 환자 좌표[], st: 단면 좌표 [s, t][] (u, v 기준, center 원점) }
+ */
+export function planePolygon(m, center, u, v, n) {
+  const edges = volumeBox(m);
+  const pts = [];
+  for (let i = 0; i < edges.length; i += 2) {
+    const a = edges[i], b = edges[i + 1];
+    const da = dot(n, sub(a, center)), db = dot(n, sub(b, center));
+    if ((da < 0) === (db < 0) && da !== 0) continue;
+    const t = da / (da - db || 1);
+    pts.push(add(a, scale(sub(b, a), t)));
+  }
+  if (pts.length < 3) return { points: [], st: [] };
+  const st = pts.map((p) => [dot(u, sub(p, center)), dot(v, sub(p, center))]);
+  const cs = st.reduce((s, q) => s + q[0], 0) / st.length, ct = st.reduce((s, q) => s + q[1], 0) / st.length;
+  const order = st.map((q, i) => [Math.atan2(q[1] - ct, q[0] - cs), i]).sort((x, y) => x[0] - y[0]).map((x) => x[1]);
+  return { points: order.map((i) => pts[i]), st: order.map((i) => st[i]) };
+}
+
+/** 열 우선 4×4 행렬 */
+export function perspective(fovyDeg, aspect, near, far) {
+  const f = 1 / Math.tan((fovyDeg * Math.PI) / 360);
+  return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, (2 * far * near) / (near - far), 0];
+}
+
+export function lookAt(eye, target, up) {
+  const zAxis = scale(sub(eye, target), 1 / len(sub(eye, target)));
+  const xRaw = [up[1] * zAxis[2] - up[2] * zAxis[1], up[2] * zAxis[0] - up[0] * zAxis[2], up[0] * zAxis[1] - up[1] * zAxis[0]];
+  const xAxis = scale(xRaw, 1 / len(xRaw));
+  const yAxis = [zAxis[1] * xAxis[2] - zAxis[2] * xAxis[1], zAxis[2] * xAxis[0] - zAxis[0] * xAxis[2], zAxis[0] * xAxis[1] - zAxis[1] * xAxis[0]];
+  return [
+    xAxis[0], yAxis[0], zAxis[0], 0,
+    xAxis[1], yAxis[1], zAxis[1], 0,
+    xAxis[2], yAxis[2], zAxis[2], 0,
+    -dot(xAxis, eye), -dot(yAxis, eye), -dot(zAxis, eye), 1,
+  ];
+}
+
+export function multiply(a, b) {
+  const out = new Array(16).fill(0);
+  for (let c = 0; c < 4; c++)
+    for (let r = 0; r < 4; r++)
+      for (let k = 0; k < 4; k++) out[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
+  return out;
+}

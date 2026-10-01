@@ -1,6 +1,6 @@
 import {
-  PRESETS, add, bricksOnPlane, planeBasis, scale, sliceLayoutCost,
-  volumeCenter, volumeDiagonal, worldToIndexMatrix,
+  PRESETS, add, brickBox, bricksOnPlane, indexToWorld, lookAt, multiply, perspective, planeBasis,
+  planePolygon, scale, sliceLayoutCost, volumeBox, volumeCenter, volumeDiagonal, worldToIndexMatrix,
 } from "./geometry.js";
 import { BrickLoader, Stats, planRuns } from "./loader.js";
 import { Renderer } from "./renderer.js";
@@ -9,9 +9,12 @@ const $ = (id) => document.getElementById(id);
 const COARSE_LEVEL = 2;
 const kb = (b) => (b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(2)} MB`);
 
+// 한 캔버스(= WebGL 컨텍스트 하나)를 두 화면으로 나눈다 — 텍스처를 공유하기 위해서다
+const MPR_W = 640, VIEW3D_W = 400, H = 640;
 const canvas = $("view");
 const dpr = Math.min(window.devicePixelRatio || 1, 2);
-canvas.width = canvas.height = Math.round(640 * dpr);
+canvas.width = Math.round((MPR_W + VIEW3D_W) * dpr);
+canvas.height = Math.round(H * dpr);
 const renderer = new Renderer(canvas);
 const stats = new Stats();
 
@@ -19,6 +22,8 @@ let m = null; // manifest
 let loader = null;
 let frames = []; // 시점별 { fine, mask, coarse, loaded:Set }
 const view = { preset: "coronal", yaw: 0, pitch: 0, offset: 0, t: 0, lo: 0, hi: 1, showCoarse: true };
+const cam = { az: 35, el: 20, dist: 2.6 }; // 3D 화면 카메라 (dist 는 볼륨 대각선 배수)
+let brickLines = { key: "", points: [] };
 let timing = {};
 let needed = [];
 let compare = null;
@@ -118,7 +123,16 @@ function requestFine(t, ids, front) {
 function plane() {
   const { u, v, n } = planeBasis(view.preset, view.yaw, view.pitch);
   const center = add(volumeCenter(m), scale(n, view.offset));
-  return { u, v, n, center, fov: volumeDiagonal(m) };
+  // 단면이 상자와 만나는 다각형에 화면을 맞춘다 — 잘린 면이 화면을 채우도록
+  const polygon = planePolygon(m, center, u, v, n);
+  let viewCenter = center, fov = volumeDiagonal(m);
+  if (polygon.st.length >= 3) {
+    const s = polygon.st.map((q) => q[0]), t = polygon.st.map((q) => q[1]);
+    const [s0, s1, t0, t1] = [Math.min(...s), Math.max(...s), Math.min(...t), Math.max(...t)];
+    viewCenter = add(center, add(scale(u, (s0 + s1) / 2), scale(v, (t0 + t1) / 2)));
+    fov = Math.max(s1 - s0, t1 - t0) * 1.04;
+  }
+  return { u, v, n, center, viewCenter, fov, polygon: polygon.points };
 }
 
 let compareTimer = 0;
@@ -141,7 +155,7 @@ function update() {
   clearTimeout(compareTimer);
   compareTimer = setTimeout(() => {
     const q = plane();
-    compare = sliceLayoutCost(m, q.center, q.u, q.v, q.fov);
+    compare = sliceLayoutCost(m, q.viewCenter, q.u, q.v, q.fov);
     const shard = m.levels[0].shards[view.t];
     compare.brickBytes = needed.reduce((s, id) => s + shard.bricks[id][1], 0);
     compare.brickRequests = planRuns(needed, shard.bricks).length;
@@ -156,17 +170,40 @@ function frame() {
     const p = plane();
     const f = frames[view.t];
     const L0 = m.levels[0], LC = m.levels[COARSE_LEVEL];
-    renderer.draw({
-      ...p,
+    const vol = {
       fine: f.fine, mask: f.mask, coarse: f.coarse,
       w2i: worldToIndexMatrix(m), origin: m.origin, dims: m.dims,
       grid: L0.brickGrid, brick: m.brick,
       coarseScale: LC.dims.map((d) => d * 2 ** COARSE_LEVEL),
       lo: view.lo, hi: view.hi, showCoarse: view.showCoarse,
-    });
+    };
+    renderer.drawMPR([0, 0, MPR_W * dpr, H * dpr], vol, { center: p.viewCenter, u: p.u, v: p.v, fov: p.fov });
+    renderer.draw3D([MPR_W * dpr, 0, VIEW3D_W * dpr, H * dpr], vol, scene3D(p, f));
     renderStats();
   }
   requestAnimationFrame(frame);
+}
+
+/** 3D 위치 화면: 볼륨 상자, 받은 블록, 단면, 환자 방향 축 */
+function scene3D(p, f) {
+  const diag = volumeDiagonal(m);
+  const target = volumeCenter(m);
+  const az = (cam.az * Math.PI) / 180, el = (cam.el * Math.PI) / 180;
+  // az = 0 이면 환자 앞(A, −y)에서 본다. 위쪽 = 머리(S, +z)
+  const dir = [Math.sin(az) * Math.cos(el), -Math.cos(az) * Math.cos(el), Math.sin(el)];
+  const eye = add(target, scale(dir, cam.dist * diag));
+  const mvp = multiply(perspective(35, VIEW3D_W / H, diag * 0.05, diag * 10), lookAt(eye, target, [0, 0, 1]));
+
+  const key = `${m.name}|${view.t}|${f.loaded.size}`;
+  if (brickLines.key !== key) brickLines = { key, points: [...f.loaded].flatMap((id) => brickBox(m, id)) };
+
+  const o = indexToWorld(m, [-0.5, -0.5, -0.5]), a = diag * 0.18;
+  const axes = [
+    [[o, add(o, [a, 0, 0])], [0.95, 0.35, 0.35, 1]], // L (+x)
+    [[o, add(o, [0, a, 0])], [0.4, 0.85, 0.4, 1]], // P (+y)
+    [[o, add(o, [0, 0, a])], [0.4, 0.6, 1.0, 1]], // S (+z)
+  ];
+  return { mvp, polygon: p.polygon, box: volumeBox(m), bricks: brickLines.points, axes };
 }
 
 function renderStats() {
@@ -249,8 +286,15 @@ $("play").onclick = () => {
 };
 $("dataset").onchange = (e) => openDataset(e.target.value);
 
+const in3D = (e) => e.offsetX > MPR_W * (canvas.clientWidth / (MPR_W + VIEW3D_W));
+
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
+  if (in3D(e)) {
+    cam.dist = Math.max(0.6, Math.min(5, cam.dist * (1 + Math.sign(e.deltaY) * 0.1)));
+    dirty = true;
+    return;
+  }
   view.offset += Math.sign(e.deltaY) * Math.min(...m.spacing);
   syncControls();
   update();
@@ -258,7 +302,7 @@ canvas.addEventListener("wheel", (e) => {
 
 let drag = null;
 canvas.addEventListener("pointerdown", (e) => {
-  drag = { x: e.clientX, y: e.clientY, window: e.shiftKey || e.button === 2 };
+  drag = { x: e.clientX, y: e.clientY, window: e.shiftKey || e.button === 2, orbit: in3D(e) };
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener("pointermove", (e) => {
@@ -266,6 +310,12 @@ canvas.addEventListener("pointermove", (e) => {
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   drag.x = e.clientX;
   drag.y = e.clientY;
+  if (drag.orbit) {
+    cam.az -= dx * 0.4;
+    cam.el = Math.max(-85, Math.min(85, cam.el + dy * 0.4));
+    dirty = true;
+    return;
+  }
   if (drag.window) {
     // 가로 = 폭, 세로 = 중심
     const width = view.hi - view.lo, center = (view.hi + view.lo) / 2;
@@ -295,6 +345,6 @@ if (params.has("ds")) {
   $("dataset").value = ds;
 }
 
-window.poc = { view, stats, timing: () => timing, needed: () => needed, compare: () => compare };
+window.poc = { view, cam, stats, timing: () => timing, needed: () => needed, compare: () => compare };
 openDataset($("dataset").value);
 requestAnimationFrame(frame);

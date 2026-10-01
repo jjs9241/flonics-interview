@@ -47,11 +47,12 @@ URL로 단면 지정: `/client/?ds=abd_mra&preset=sagittal&yaw=30&pitch=20&offse
 |---|---|
 | `scripts/convert.py` | DICOM → 시점 분리 → 32³ 블록 × 3단계 피라미드, 블록별 zlib → shard + 인덱스(manifest) |
 | `server/serve.mjs` | S3/CloudFront 흉내. 단일 Range → 206, 원본 DICOM 비공개, 지연 옵션 |
-| `client/` | WebGL2 MPR. 저해상도(L2) 먼저 → 단면에 걸친 L0 블록만 Range로 받아 `texSubImage3D` |
+| `client/` | WebGL2. 왼쪽 = 잘린 단면을 정면으로(단면-상자 교차 다각형에 화면 맞춤), 오른쪽 = 3D 위치(볼륨 상자 · 단면 · **받은 블록**). 저해상도(L2) 먼저 → 단면에 걸친 L0 블록만 Range로 받아 `texSubImage3D` |
 
 - 블록은 shard 안에 z→y→x 순서 → x 방향 이웃 블록이 파일에서도 이웃 → **Range 하나로 합침**
 - 고해상도 블록 도착 여부는 블록 격자 크기의 mask 텍스처로 셰이더에 전달 → 블록 단위로 점진적 교체
 - 재생 중에는 다음 시점의 블록을 미리 받음 (prefetch)
+- 두 화면은 캔버스(= WebGL 컨텍스트) 하나를 viewport로 나눠 그림 → 볼륨 텍스처를 공유. Cornerstone3D가 오프스크린 캔버스 하나로 여러 뷰포트를 그리는 이유와 같음
 
 ## 측정 (복부 MRA 512×512×56, 처음부터 단면 하나를 볼 때, 지연 30ms)
 
